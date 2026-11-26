@@ -87,3 +87,23 @@ def test_action_plan_schema_validation() -> None:
     parsed = AirQualityActionPlan.model_validate(sample)
     assert parsed.estimated_exposure_reduction_pct == 35
 
+
+def test_call_with_fallback_recovers_from_503() -> None:
+    from services.genai_service import _call_with_fallback
+    calls: list[str] = []
+
+    def flaky_model(model_name: str) -> str:
+        calls.append(model_name)
+        if model_name == "gemini-2.5-flash":
+            raise RuntimeError("503 UNAVAILABLE: high demand")
+        return f"success:{model_name}"
+
+    result = _call_with_fallback(
+        flaky_model,
+        models=("gemini-2.5-flash", "gemini-2.5-flash-lite"),
+        retry_delay_sec=0.0,
+    )
+    assert result == "success:gemini-2.5-flash-lite"
+    assert calls == ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+
+
