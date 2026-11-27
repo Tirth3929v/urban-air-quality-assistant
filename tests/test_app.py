@@ -17,6 +17,7 @@ from services.aqi_service import (
 from services.genai_service import (
     AirQualityActionPlan,
     _call_with_fallback,
+    _create_gemini_client,
     generate_action_plan,
     translate_action_plan,
 )
@@ -324,3 +325,42 @@ def test_fallback_no_retry_on_401_and_empty_response_raises(
     with patch("services.genai_service._create_gemini_client", return_value=mock_client):
         with pytest.raises(RuntimeError, match="empty response"):
             generate_action_plan(_sample_snapshot(), "General", "Metro", "Apartment", "")
+
+
+def test_create_gemini_client_uses_v1beta() -> None:
+    with patch("services.genai_service.genai.Client") as mock_client_cls:
+        _create_gemini_client("test-key")
+        mock_client_cls.assert_called_once()
+        _, kwargs = mock_client_cls.call_args
+        assert kwargs["api_key"] == "test-key"
+        assert kwargs["http_options"].api_version == "v1beta"
+
+
+def test_call_with_fallback_empty_models_raises() -> None:
+    with pytest.raises(RuntimeError, match="No Gemini models configured."):
+        _call_with_fallback(lambda _: "ok", models=())
+
+
+def test_generate_action_plan_parses_json_when_parsed_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    expected_plan = _sample_plan()
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = SimpleNamespace(
+        parsed=None, text=expected_plan.model_dump_json()
+    )
+    with patch("services.genai_service._create_gemini_client", return_value=mock_client):
+        result = generate_action_plan(_sample_snapshot(), "General", "Metro", "Apartment", "")
+    assert result.estimated_exposure_reduction_pct == 35
+
+
+def test_translate_action_plan_empty_response_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = SimpleNamespace(text="")
+    with patch("services.genai_service._create_gemini_client", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Translation returned empty output."):
+            translate_action_plan("# Plan", "Hindi")
