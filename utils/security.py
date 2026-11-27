@@ -3,7 +3,10 @@
 import html
 import re
 
+import requests
+
 CITY_PATTERN = re.compile(r"^[a-zA-Z\s,.-]{2,60}$")
+URL_PATTERN = re.compile(r"https?://\S+")
 
 
 def sanitize_city_name(city: str) -> str:
@@ -30,3 +33,16 @@ def sanitize_free_text(text: str, max_length: int = 250) -> str:
 def escape_for_display(text: str) -> str:
     """Escape text safely before rendering in any HTML context."""
     return html.escape(str(text), quote=True)
+
+
+def sanitize_error_message(exc: Exception) -> str:
+    """Return a safe, user-friendly error message without leaking internal traces or URLs."""
+    if isinstance(exc, ValueError):
+        return URL_PATTERN.sub("[redacted-url]", str(exc))
+    if isinstance(exc, requests.RequestException):
+        return "Unable to reach the air quality telemetry service. Please try again shortly."
+    if isinstance(exc, RuntimeError):
+        msg = str(exc)
+        if "GEMINI_API_KEY" in msg or "empty response" in msg.lower():
+            return msg
+    return "An unexpected service error occurred while generating your plan. Please try again."

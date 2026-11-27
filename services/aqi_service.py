@@ -2,11 +2,15 @@
 
 from dataclasses import dataclass
 from typing import Any
+
 import requests
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 REQUEST_TIMEOUT = 10
+
+_HTTP_SESSION = requests.Session()
+_HTTP_SESSION.headers.update({"User-Agent": "UrbanAirQualityAssistant/1.0"})
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,33 @@ class AirQualitySnapshot:
     cleanest_window: str
     hourly_times: list[str]
     hourly_pm2_5: list[float]
+
+
+def categorize_us_aqi(us_aqi: float) -> tuple[str, str]:
+    """Return the standard US EPA AQI category and plain-language health guidance."""
+    if us_aqi <= 50:
+        return ("Good", "Air quality is satisfactory with little or no risk.")
+    if us_aqi <= 100:
+        return (
+            "Moderate",
+            "Acceptable air quality; sensitive individuals should limit prolonged exertion.",
+        )
+    if us_aqi <= 150:
+        return (
+            "Unhealthy for Sensitive Groups",
+            "Children, seniors, and people with asthma should reduce prolonged outdoor exertion.",
+        )
+    if us_aqi <= 200:
+        return (
+            "Unhealthy",
+            "Everyone may begin to experience health effects; limit outdoor activity.",
+        )
+    if us_aqi <= 300:
+        return (
+            "Very Unhealthy",
+            "Health alert: avoid prolonged outdoor exertion and keep windows sealed.",
+        )
+    return ("Hazardous", "Emergency conditions: remain indoors with air filtration if possible.")
 
 
 def classify_pollutant_driver(pm2_5: float, pm10: float, no2: float) -> str:
@@ -60,9 +91,13 @@ def find_cleanest_two_hour_window(times: list[str], pm25_values: list[float]) ->
     return f"{start_hour} – {end_hour} (Avg PM2.5: {best_avg:.1f} µg/m³)"
 
 
-def fetch_air_quality(city: str) -> AirQualitySnapshot:
+def fetch_air_quality(
+    city: str, session: requests.Session | None = None
+) -> AirQualitySnapshot:
     """Geocode a city and fetch live + 24h air quality data."""
-    geo_resp = requests.get(
+    http = session or _HTTP_SESSION
+
+    geo_resp = http.get(
         GEOCODE_URL,
         params={"name": city, "count": 1, "language": "en", "format": "json"},
         timeout=REQUEST_TIMEOUT,
@@ -80,7 +115,7 @@ def fetch_air_quality(city: str) -> AirQualitySnapshot:
     label_parts = [place.get("name", city), place.get("admin1"), place.get("country")]
     city_label = ", ".join(p for p in label_parts if p)
 
-    aq_resp = requests.get(
+    aq_resp = http.get(
         AIR_QUALITY_URL,
         params={
             "latitude": lat,
@@ -98,15 +133,15 @@ def fetch_air_quality(city: str) -> AirQualitySnapshot:
     current = aq_data.get("current", {})
     hourly = aq_data.get("hourly", {})
 
-    us_aqi = float(current.get("us_aqi") or 0.0)
-    pm2_5 = float(current.get("pm2_5") or 0.0)
-    pm10 = float(current.get("pm10") or 0.0)
-    no2 = float(current.get("nitrogen_dioxide") or 0.0)
-    co = float(current.get("carbon_monoxide") or 0.0)
-    o3 = float(current.get("ozone") or 0.0)
+    us_aqi = max(0.0, float(current.get("us_aqi") or 0.0))
+    pm2_5 = max(0.0, float(current.get("pm2_5") or 0.0))
+    pm10 = max(0.0, float(current.get("pm10") or 0.0))
+    no2 = max(0.0, float(current.get("nitrogen_dioxide") or 0.0))
+    co = max(0.0, float(current.get("carbon_monoxide") or 0.0))
+    o3 = max(0.0, float(current.get("ozone") or 0.0))
 
     times: list[str] = hourly.get("time", [])[:24]
-    hourly_pm25: list[float] = [float(v or 0.0) for v in hourly.get("pm2_5", [])[:24]]
+    hourly_pm25: list[float] = [max(0.0, float(v or 0.0)) for v in hourly.get("pm2_5", [])[:24]]
 
     return AirQualitySnapshot(
         city_label=city_label,
