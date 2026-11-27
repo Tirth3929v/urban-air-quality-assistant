@@ -184,7 +184,7 @@ def translate_action_plan(markdown_report: str, target_language: str) -> str:
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing.")
 
-    safe_report = sanitize_free_text(markdown_report, max_length=4000)
+    safe_report = sanitize_free_text(markdown_report, max_length=4000, allow_newlines=True)
     prompt = f"""Translate the following Family Winter Smog Action Plan into clear, natural,
 everyday {target_language} so elders and family members can follow it easily. Keep Markdown
 headings, bullet points, numbers, and units (µg/m³, kg CO2, %) intact.

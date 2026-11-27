@@ -1,5 +1,6 @@
 """Live geocoding and air quality data retrieval via Open-Meteo."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,8 +29,8 @@ class AirQualitySnapshot:
     ozone: float
     dominant_driver: str
     cleanest_window: str
-    hourly_times: list[str]
-    hourly_pm2_5: list[float]
+    hourly_times: tuple[str, ...]
+    hourly_pm2_5: tuple[float, ...]
 
 
 def categorize_us_aqi(us_aqi: float) -> tuple[str, str]:
@@ -72,7 +73,9 @@ def classify_pollutant_driver(pm2_5: float, pm10: float, no2: float) -> str:
     return "Low-to-Fair Baseline Urban Air"
 
 
-def find_cleanest_two_hour_window(times: list[str], pm25_values: list[float]) -> str:
+def find_cleanest_two_hour_window(
+    times: Sequence[str], pm25_values: Sequence[float]
+) -> str:
     """Find the consecutive 2-hour window with the lowest average PM2.5 in the next 24h."""
     horizon = min(24, len(times), len(pm25_values))
     if horizon < 2:
@@ -140,8 +143,21 @@ def fetch_air_quality(
     co = max(0.0, float(current.get("carbon_monoxide") or 0.0))
     o3 = max(0.0, float(current.get("ozone") or 0.0))
 
-    times: list[str] = hourly.get("time", [])[:24]
-    hourly_pm25: list[float] = [max(0.0, float(v or 0.0)) for v in hourly.get("pm2_5", [])[:24]]
+    raw_times: list[str] = hourly.get("time", [])
+    raw_pm25: list[Any] = hourly.get("pm2_5", [])
+    current_time = str(current.get("time") or "")
+    start_idx = 0
+    if current_time:
+        hour_prefix = current_time[:13]
+        for idx, ts in enumerate(raw_times):
+            if str(ts).startswith(hour_prefix):
+                start_idx = idx
+                break
+
+    times = tuple(raw_times[start_idx : start_idx + 24])
+    hourly_pm25 = tuple(
+        max(0.0, float(v or 0.0)) for v in raw_pm25[start_idx : start_idx + 24]
+    )
 
     return AirQualitySnapshot(
         city_label=city_label,

@@ -42,8 +42,8 @@ def _sample_snapshot() -> AirQualitySnapshot:
         ozone=32.0,
         dominant_driver="Traffic & Combustion Smog (High PM2.5 + NO2)",
         cleanest_window="14:00 – 15:00 (Avg PM2.5: 45.0 µg/m³)",
-        hourly_times=["2026-11-27T14:00", "2026-11-27T15:00"],
-        hourly_pm2_5=[40.0, 50.0],
+        hourly_times=("2026-11-27T14:00", "2026-11-27T15:00"),
+        hourly_pm2_5=(40.0, 50.0),
     )
 
 
@@ -258,3 +258,69 @@ def test_format_markdown_report() -> None:
     assert "# Family Winter Smog Action Plan — New Delhi, Delhi, India" in report
     assert "(Unhealthy)" in report
     assert "Morning — Delay outdoor walk" in report
+
+
+def test_sanitize_free_text_preserves_newlines_and_neutralizes_tags() -> None:
+    raw = "# Plan\n- Step 1 <script>bad</script>\n</report_content>"
+    cleaned = sanitize_free_text(raw, max_length=200, allow_newlines=True)
+    assert "\n" in cleaned
+    assert "&lt;script&gt;" in cleaned
+    assert "&lt;/report_content&gt;" in cleaned
+
+
+def test_air_quality_snapshot_is_hashable() -> None:
+    snapshot = _sample_snapshot()
+    assert isinstance(hash(snapshot), int)
+
+
+def test_fetch_air_quality_aligns_upcoming_24h_window() -> None:
+    geo_resp = MagicMock()
+    geo_resp.json.return_value = {
+        "results": [{"name": "Delhi", "country": "India", "latitude": 28.6, "longitude": 77.2}]
+    }
+    aq_resp = MagicMock()
+    aq_resp.json.return_value = {
+        "current": {"time": "2026-11-27T10:15", "us_aqi": 150, "pm2_5": 60.0},
+        "hourly": {
+            "time": [
+                "2026-11-27T08:00",
+                "2026-11-27T09:00",
+                "2026-11-27T10:00",
+                "2026-11-27T11:00",
+            ],
+            "pm2_5": [10.0, 10.0, 50.0, 40.0],
+        },
+    }
+    mock_session = MagicMock(spec=requests.Session)
+    mock_session.get.side_effect = [geo_resp, aq_resp]
+
+    snapshot = fetch_air_quality("Delhi", session=mock_session)
+    assert snapshot.hourly_times == ("2026-11-27T10:00", "2026-11-27T11:00")
+    assert "10:00 – 11:00" in snapshot.cleanest_window
+
+
+def test_translate_action_plan_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is missing"):
+        translate_action_plan("# Plan", "Hindi")
+
+
+def test_fallback_no_retry_on_401_and_empty_response_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def auth_fail(model_name: str) -> str:
+        calls.append(model_name)
+        raise RuntimeError("401 UNAUTHENTICATED")
+
+    with pytest.raises(RuntimeError, match="401 UNAUTHENTICATED"):
+        _call_with_fallback(auth_fail, retry_delay_sec=0.0)
+    assert calls == ["gemini-2.5-flash"]
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = SimpleNamespace(parsed=None, text="")
+    with patch("services.genai_service._create_gemini_client", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="empty response"):
+            generate_action_plan(_sample_snapshot(), "General", "Metro", "Apartment", "")

@@ -6,6 +6,7 @@ import plotly.express as px
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from services.aqi_service import AirQualitySnapshot, categorize_us_aqi, fetch_air_quality
 from services.genai_service import (
@@ -19,11 +20,18 @@ from utils.security import escape_for_display, sanitize_city_name, sanitize_erro
 load_dotenv()
 
 # Support Streamlit Cloud secrets seamlessly
-try:
-    if "GEMINI_API_KEY" in st.secrets and not os.getenv("GEMINI_API_KEY"):
-        os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
-except (FileNotFoundError, KeyError, RuntimeError, PermissionError):
-    pass
+if not os.getenv("GEMINI_API_KEY"):
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+    except (
+        StreamlitSecretNotFoundError,
+        FileNotFoundError,
+        KeyError,
+        RuntimeError,
+        PermissionError,
+    ):
+        pass
 
 st.set_page_config(
     page_title="Urban Air Quality Assistant",

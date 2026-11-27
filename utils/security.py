@@ -19,11 +19,15 @@ def sanitize_city_name(city: str) -> str:
     return cleaned
 
 
-def sanitize_free_text(text: str, max_length: int = 250) -> str:
+def sanitize_free_text(
+    text: str, max_length: int = 250, allow_newlines: bool = False
+) -> str:
     """Strip control characters, truncate, and neutralize XML delimiter tags."""
     if not text:
         return "None specified"
-    cleaned = "".join(ch for ch in text if ch.isprintable()).strip()
+    cleaned = "".join(
+        ch for ch in text if ch.isprintable() or (allow_newlines and ch == "\n")
+    ).strip()
     cleaned = cleaned[:max_length]
     # Prevent closing XML boundary tags used in prompts
     cleaned = cleaned.replace("<", "&lt;").replace(">", "&gt;")
